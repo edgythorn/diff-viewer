@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diff Viewer</title>
+<!-- diff2html CSS -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/css/diff2html.min.css">
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 16px; background: #f6f8fa; }
+  h1 { font-size: 18px; margin: 0 0 12px; color: #24292f; }
+  #diff { background: #fff; border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden; }
+  .d2h-file-header { display: none; } /* скрываем заголовок файла, он тут не нужен */
+  .error { color: #cf222e; background: #ffebe9; border: 1px solid #ff8182; padding: 12px; border-radius: 6px; }
+  .hint { color: #57606a; font-size: 13px; margin-top: 12px; }
+  .hint code { background: #eaeef2; padding: 2px 6px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<h1>Сравнение текстов</h1>
+<div id="diff"></div>
+<div class="hint">
+  Передайте тексты в URL: <code>?original=&lt;gzip+base64&gt;&amp;changed=&lt;gzip+base64&gt;</code>
+</div>
+
+<!-- jsdiff -->
+<script src="https://cdn.jsdelivr.net/npm/diff@5.2.0/dist/diff.min.js"></script>
+<!-- diff2html UI bundle (включает зависимости) -->
+<script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/js/diff2html-ui.min.js"></script>
+<!-- pako для Gzip -->
+<script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+
+<script>
+(function () {
+  const diffEl = document.getElementById('diff');
+
+  // --- Утилиты кодирования/декодирования ---
+
+  // Base64 -> Uint8Array
+  function base64ToBytes(b64) {
+    // поддержка URL-safe base64
+    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+    // восстановить padding
+    while (b64.length % 4) b64 += '=';
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return bytes;
+  }
+
+  // Gzip+Base64 -> строка (UTF-8)
+  function decodeParam(value) {
+    if (!value) return '';
+    try {
+      const bytes = base64ToBytes(decodeURIComponent(value));
+      const inflated = pako.ungzip(bytes);
+      return new TextDecoder('utf-8').decode(inflated);
+    } catch (e) {
+      // если это не gzip+base64 — попробуем как обычный текст (URL-decoded)
+      try { return decodeURIComponent(value); } catch (_) { return value; }
+    }
+  }
+
+  // строка -> Gzip+Base64 (для генерации ссылок)
+  function encodeParam(text) {
+    const bytes = new TextEncoder().encode(text);
+    const compressed = pako.gzip(bytes);
+    let bin = '';
+    for (let i = 0; i < compressed.length; i++) bin += String.fromCharCode(compressed[i]);
+    return encodeURIComponent(btoa(bin));
+  }
+
+  // Экспортируем в глобал, чтобы можно было пользоваться из консоли
+  window.DiffViewer = { encodeParam, decodeParam };
+
+  // --- Основная логика ---
+
+  const params = new URLSearchParams(location.search);
+  const original = decodeParam(params.get('original'));
+  const changed  = decodeParam(params.get('changed'));
+
+  if (!original && !changed) {
+    diffEl.innerHTML = '<div class="error">Нет данных. Добавьте в URL параметры <code>original</code> и <code>changed</code> (gzip+base64).</div>';
+    return;
+  }
+
+  // Строим unified diff через jsdiff
+  const patch = Diff.createTwoFilesPatch(
+    'original', 'changed', original, changed, '', '', { context: 3 }
+  );
+
+  // Рисуем side-by-side через diff2html
+  const ui = new Diff2HtmlUI(diffEl, patch, {
+    outputFormat: 'side-by-side',
+    drawFileList: false,
+    matching: 'lines',
+    highlight: false
+  });
+  ui.draw();
+})();
+</script>
+</body>
+</html>
