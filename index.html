@@ -3,100 +3,468 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Diff Viewer</title>
-<!-- diff2html CSS -->
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/css/diff2html.min.css">
+<title>Сравнение текстов</title>
 <style>
   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 16px; background: #f6f8fa; }
   h1 { font-size: 18px; margin: 0 0 12px; color: #24292f; }
-  #diff { background: #fff; border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden; }
-  .d2h-file-header { display: none; } /* скрываем заголовок файла, он тут не нужен */
-  .error { color: #cf222e; background: #ffebe9; border: 1px solid #ff8182; padding: 12px; border-radius: 6px; }
+
+  .toolbar {
+    display: flex; flex-wrap: wrap; gap: 24px; align-items: center;
+    margin-bottom: 12px; padding: 10px 12px; background: #fff;
+    border: 1px solid #d0d7de; border-radius: 6px; font-size: 14px;
+  }
+  .toolbar label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+  .toolbar .group { display: inline-flex; gap: 12px; align-items: center; }
+  .toolbar select {
+    padding: 4px 8px; border-radius: 6px; border: 1px solid #d0d7de;
+    background: #f6f8fa; font-size: 14px; cursor: pointer;
+  }
+
+  #inputPanel { display: none; margin-bottom: 12px; }
+  #inputPanel.visible { display: block; }
+  #inputPanel .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 768px) { #inputPanel .grid { grid-template-columns: 1fr; } }
+  #inputPanel textarea {
+    width: 100%; box-sizing: border-box; min-height: 120px; resize: vertical;
+    font-family: ui-monospace, monospace; font-size: 13px; padding: 8px;
+    border: 1px solid #d0d7de; border-radius: 6px;
+  }
+  #inputPanel button {
+    margin-top: 8px; padding: 6px 14px; border-radius: 6px;
+    border: 1px solid #d0d7de; background: #f6f8fa; cursor: pointer;
+  }
+  #inputPanel button.primary { background: #2da44e; border-color: #2da44e; color: #fff; }
+
+  /* --- СТИЛИ ДЛЯ DIFF --- */
+  #diff { 
+    background: #fff; border: 1px solid #d0d7de; border-radius: 6px; overflow: hidden; 
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace; 
+    font-size: 12px; 
+  }
+  
+  /* Шапка */
+  .diff-header {
+    display: flex;
+    border-bottom: 1px solid #d0d7de;
+    background: #f6f8fa;
+    font-weight: 600;
+    font-family: -apple-system, sans-serif;
+    font-size: 13px;
+  }
+  .diff-header-side {
+    width: 50%;
+    padding: 8px 12px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .diff-header-side:first-child { border-right: 1px solid #d0d7de; }
+  .diff-header .color-red { color: #cf222e; }
+  .diff-header .color-green { color: #1a7f37; }
+
+  /* Строки */
+  .diff-row { 
+    display: flex; 
+    border-bottom: 1px solid #eaeef2;
+    line-height: 18px; /* Жестко задаем высоту строки */
+  }
+  
+  .diff-split .diff-side { 
+    width: 50%; 
+    box-sizing: border-box; 
+    display: flex; 
+  }
+  .diff-split .diff-side:first-child { border-right: 1px solid #eaeef2; }
+  
+  .diff-unified .diff-side { width: 100%; display: flex; }
+
+  .diff-lineno {
+    width: 40px; min-width: 40px; text-align: right; 
+    padding: 0 8px; 
+    color: #8c959f; background: #f6f8fa; user-select: none;
+    border-right: 1px solid #eaeef2; flex-shrink: 0;
+  }
+
+  .diff-content {
+    flex-grow: 1; 
+    padding: 0 8px; 
+    white-space: pre-wrap; 
+    word-break: break-word; 
+    overflow-wrap: anywhere; 
+  }
+  
+  /* Цвета */
+  .diff-added .diff-side { background: #f0fdf4; }
+  .diff-added .diff-content { color: #1a7f37; }
+  
+  .diff-removed .diff-side { background: #fff5f5; }
+  .diff-removed .diff-content { color: #cf222e; }
+
+  .diff-added ins { background: #bbf7d0; text-decoration: none; }
+  .diff-removed del { background: #fecaca; text-decoration: none; }
+
+  .diff-empty { background: #fff; }
+
+  .diff-expand {
+    display: block; width: 100%; padding: 2px; background: #f6f8fa;
+    border: none; border-bottom: 1px solid #d0d7de;
+    color: #0969da; cursor: pointer; text-align: center; font-size: 12px;
+    font-family: -apple-system, sans-serif; outline: none;
+  }
+  .diff-expand:hover { background: #eaeef2; }
+
   .hint { color: #57606a; font-size: 13px; margin-top: 12px; }
   .hint code { background: #eaeef2; padding: 2px 6px; border-radius: 4px; }
 </style>
 </head>
 <body>
 <h1>Сравнение текстов</h1>
-<div id="diff"></div>
-<div class="hint">
-  Передайте тексты в URL: <code>?original=&lt;gzip+base64&gt;&amp;changed=&lt;gzip+base64&gt;</code>
+
+<div class="toolbar">
+  <div class="group">
+    <span>Вид:</span>
+    <label><input type="radio" name="view" value="side-by-side"> Side-by-side</label>
+    <label><input type="radio" name="view" value="line-by-line"> Line-by-line</label>
+  </div>
+  
+  <div class="group">
+    <span>Строк контекста:</span>
+    <select id="contextSelect">
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3" selected>3</option>
+      <option value="5">5</option>
+      <option value="10">10</option>
+      <option value="9999">Все</option>
+    </select>
+  </div>
 </div>
 
-<!-- jsdiff -->
+<div id="inputPanel">
+  <div class="grid">
+    <textarea id="textA" placeholder="Оригинал…"></textarea>
+    <textarea id="textB" placeholder="Изменённый…"></textarea>
+  </div>
+  <div>
+    <button class="primary" id="compareBtn">Сравнить</button>
+    <button id="clearBtn">Очистить</button>
+  </div>
+</div>
+
+<div id="diff"></div>
+
+<div class="hint">
+  Или передайте тексты в URL: <code>?original=&lt;gzip+base64&gt;&amp;changed=&lt;gzip+base64&gt;</code>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/diff@5.2.0/dist/diff.min.js"></script>
-<!-- diff2html UI bundle (включает зависимости) -->
-<script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/js/diff2html-ui.min.js"></script>
-<!-- pako для Gzip -->
 <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
 
 <script>
 (function () {
   const diffEl = document.getElementById('diff');
+  const viewRadios = document.querySelectorAll('input[name="view"]');
+  const contextSelect = document.getElementById('contextSelect');
+  const inputPanel = document.getElementById('inputPanel');
+  const textA = document.getElementById('textA');
+  const textB = document.getElementById('textB');
 
-  // --- Утилиты кодирования/декодирования ---
+  let userTouchedView = false;
+  const savedContext = localStorage.getItem('diffContext') || '3';
+  contextSelect.value = savedContext;
 
-  // Base64 -> Uint8Array
-  function base64ToBytes(b64) {
-    // поддержка URL-safe base64
-    b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
-    // восстановить padding
-    while (b64.length % 4) b64 += '=';
-    const bin = atob(b64);
-    const bytes = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-    return bytes;
-  }
-
-  // Gzip+Base64 -> строка (UTF-8)
   function decodeParam(value) {
     if (!value) return '';
     try {
-      const bytes = base64ToBytes(decodeURIComponent(value));
-      const inflated = pako.ungzip(bytes);
-      return new TextDecoder('utf-8').decode(inflated);
-    } catch (e) {
-      // если это не gzip+base64 — попробуем как обычный текст (URL-decoded)
-      try { return decodeURIComponent(value); } catch (_) { return value; }
+      const bytes = Uint8Array.from(atob(decodeURIComponent(value).replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+      return new TextDecoder('utf-8').decode(pako.ungzip(bytes));
+    } catch (e) { return decodeURIComponent(value); }
+  }
+  function encodeParam(text) {
+    const compressed = pako.gzip(new TextEncoder().encode(text));
+    return encodeURIComponent(btoa(String.fromCharCode.apply(null, compressed)));
+  }
+  function escapeHtml(unsafe) {
+    return unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  let originalText = '';
+  let changedText = '';
+  
+  // Теперь мы храним массив строк, где каждая строка уже размечена
+  let renderedRows = []; 
+  let stats = { added: 0, removed: 0 };
+
+  function desiredDefaultView() {
+    return window.matchMedia('(max-width: 768px)').matches ? 'line-by-line' : 'side-by-side';
+  }
+  function currentView() {
+    const checked = document.querySelector('input[name="view"]:checked');
+    return checked ? checked.value : desiredDefaultView();
+  }
+  viewRadios.forEach(r => r.addEventListener('change', () => {
+    userTouchedView = true;
+    render();
+  }));
+
+  contextSelect.addEventListener('change', (e) => {
+    localStorage.setItem('diffContext', e.target.value);
+    render();
+  });
+
+  // --- Вычисление диффа и генерация строк ---
+  function computeDiff() {
+    stats = { added: 0, removed: 0 };
+    renderedRows = [];
+    
+    if (!originalText && !changedText) return;
+
+    const cleanA = originalText.replace(/\n+$/, '');
+    const cleanB = changedText.replace(/\n+$/, '');
+    
+    // Сначала грубое построчное сравнение
+    const lineDiff = Diff.diffLines(cleanA, cleanB);
+    
+    let leftLineNo = 1;
+    let rightLineNo = 1;
+
+    for (let i = 0; i < lineDiff.length; i++) {
+      const part = lineDiff[i];
+
+      if (part.removed && i + 1 < lineDiff.length && lineDiff[i+1].added) {
+        // Найдена пара удаленных и добавленных строк
+        const oldLines = part.value.replace(/\n$/, '').split('\n');
+        const newLines = lineDiff[i+1].value.replace(/\n$/, '').split('\n');
+        
+        const maxLines = Math.max(oldLines.length, newLines.length);
+        for (let j = 0; j < maxLines; j++) {
+          const oldLine = oldLines[j] !== undefined ? oldLines[j] : null;
+          const newLine = newLines[j] !== undefined ? newLines[j] : null;
+
+          let oldHtml = '', newHtml = '';
+          
+          if (oldLine !== null && newLine !== null) {
+            // Посимвольное сравнение
+            const charDiff = Diff.diffChars(oldLine, newLine);
+            charDiff.forEach(c => {
+              if (c.removed) oldHtml += `<del>${escapeHtml(c.value)}</del>`;
+              else if (c.added) newHtml += `<ins>${escapeHtml(c.value)}</ins>`;
+              else {
+                const esc = escapeHtml(c.value);
+                oldHtml += esc;
+                newHtml += esc;
+              }
+            });
+          } else if (oldLine !== null) {
+            oldHtml = `<del>${escapeHtml(oldLine)}</del>`;
+          } else if (newLine !== null) {
+            newHtml = `<ins>${escapeHtml(newLine)}</ins>`;
+          }
+
+          renderedRows.push({
+            type: 'changed',
+            oldContent: oldHtml,
+            newContent: newHtml,
+            leftNo: oldLine !== null ? leftLineNo++ : null,
+            rightNo: newLine !== null ? rightLineNo++ : null
+          });
+        }
+        stats.removed += oldLines.length;
+        stats.added += newLines.length;
+        i++; // Пропускаем следующий блок, так как мы его уже обработали в паре
+      } else if (part.removed) {
+        // Только удаленные строки
+        const lines = part.value.replace(/\n$/, '').split('\n');
+        lines.forEach(line => {
+          renderedRows.push({
+            type: 'removed',
+            oldContent: `<del>${escapeHtml(line)}</del>`,
+            newContent: '',
+            leftNo: leftLineNo++,
+            rightNo: null
+          });
+        });
+        stats.removed += lines.length;
+      } else if (part.added) {
+        // Только добавленные строки
+        const lines = part.value.replace(/\n$/, '').split('\n');
+        lines.forEach(line => {
+          renderedRows.push({
+            type: 'added',
+            oldContent: '',
+            newContent: `<ins>${escapeHtml(line)}</ins>`,
+            leftNo: null,
+            rightNo: rightLineNo++
+          });
+        });
+        stats.added += lines.length;
+      } else {
+        // Обычные неизмененные строки
+        const lines = part.value.replace(/\n$/, '').split('\n');
+        lines.forEach(line => {
+          const esc = escapeHtml(line);
+          renderedRows.push({
+            type: 'normal',
+            oldContent: esc,
+            newContent: esc,
+            leftNo: leftLineNo++,
+            rightNo: rightLineNo++
+          });
+        });
+      }
     }
   }
 
-  // строка -> Gzip+Base64 (для генерации ссылок)
-  function encodeParam(text) {
-    const bytes = new TextEncoder().encode(text);
-    const compressed = pako.gzip(bytes);
-    let bin = '';
-    for (let i = 0; i < compressed.length; i++) bin += String.fromCharCode(compressed[i]);
-    return encodeURIComponent(btoa(bin));
+  // --- Рендер ---
+  function render() {
+    diffEl.innerHTML = '';
+    if (!renderedRows.length) return;
+
+    const isSideBySide = currentView() === 'side-by-side';
+    diffEl.className = isSideBySide ? 'diff-split' : 'diff-unified';
+
+    const CONTEXT = parseInt(contextSelect.value, 10);
+    
+    let resultHtml = '';
+
+    // Шапка
+    if (isSideBySide) {
+      resultHtml += `<div class="diff-header">
+        <div class="diff-header-side">
+          <span class="color-red">Оригинал</span>
+          <span class="color-red">${stats.removed} удалено</span>
+        </div>
+        <div class="diff-header-side">
+          <span class="color-green">Измененный</span>
+          <span class="color-green">${stats.added} добавлено</span>
+        </div>
+      </div>`;
+    }
+
+    let i = 0;
+    while (i < renderedRows.length) {
+      if (renderedRows[i].type === 'normal') {
+        let start = i;
+        while (i < renderedRows.length && renderedRows[i].type === 'normal') i++;
+        let end = i;
+        let count = end - start;
+
+        if (count > CONTEXT * 2 + 1) {
+          for (let j = start; j < start + CONTEXT; j++) resultHtml += buildRow(renderedRows[j], isSideBySide);
+          let skip = count - CONTEXT * 2;
+          resultHtml += `<button class="diff-expand" onclick="this.nextElementSibling.style.display='block'; this.style.display='none';">Развернуть ${skip} строк</button>`;
+          resultHtml += `<div class="diff-hidden-block" style="display:none">`;
+          for (let j = start + CONTEXT; j < end - CONTEXT; j++) resultHtml += buildRow(renderedRows[j], isSideBySide);
+          resultHtml += `</div>`;
+          for (let j = end - CONTEXT; j < end; j++) resultHtml += buildRow(renderedRows[j], isSideBySide);
+        } else {
+          for (let j = start; j < end; j++) resultHtml += buildRow(renderedRows[j], isSideBySide);
+        }
+      } else {
+        while (i < renderedRows.length && renderedRows[i].type !== 'normal') {
+          resultHtml += buildRow(renderedRows[i], isSideBySide);
+          i++;
+        }
+      }
+    }
+    diffEl.innerHTML = resultHtml;
   }
 
-  // Экспортируем в глобал, чтобы можно было пользоваться из консоли
-  window.DiffViewer = { encodeParam, decodeParam };
+  function buildRow(row, isSideBySide) {
+    let rowClass = '';
+    if (row.type === 'added') rowClass = 'diff-added';
+    else if (row.type === 'removed') rowClass = 'diff-removed';
+    else if (row.type === 'changed') rowClass = 'diff-removed diff-added'; // Спец класс для половинок
 
-  // --- Основная логика ---
+    const makeSide = (lineNo, textContent, isRight) => {
+      let sideClass = 'diff-side';
+      if (isRight && row.type === 'added') sideClass += ' diff-added';
+      if (!isRight && row.type === 'removed') sideClass += ' diff-removed';
+      if (row.type === 'changed') {
+        sideClass += isRight ? ' diff-added' : ' diff-removed';
+      }
+      
+      // Если контента нет, делаем пустой фон
+      if (!textContent) sideClass += ' diff-empty';
 
+      return `
+        <div class="${sideClass}">
+          <div class="diff-lineno">${lineNo || ''}</div>
+          <div class="diff-content">${textContent || '&nbsp;'}</div>
+        </div>`;
+    };
+
+    if (isSideBySide) {
+      return `<div class="diff-row">
+        ${makeSide(row.leftNo, row.oldContent, false)}
+        ${makeSide(row.rightNo, row.newContent, true)}
+      </div>`;
+    } else {
+      // Line-by-line: показываем только одну сторону в зависимости от типа
+      if (row.type === 'added') {
+        return `<div class="diff-row diff-added">
+          ${makeSide(row.rightNo, row.newContent, true)}
+        </div>`;
+      } else if (row.type === 'removed') {
+        return `<div class="diff-row diff-removed">
+          ${makeSide(row.leftNo, row.oldContent, false)}
+        </div>`;
+      } else if (row.type === 'changed') {
+        // В режиме Line-by-line для измененной строки показываем две строки (старую и новую)
+        return `<div class="diff-row diff-removed">
+          ${makeSide(row.leftNo, row.oldContent, false)}
+        </div>
+        <div class="diff-row diff-added">
+          ${makeSide(row.rightNo, row.newContent, true)}
+        </div>`;
+      } else {
+        return `<div class="diff-row">
+          ${makeSide(row.leftNo, row.oldContent, false)}
+        </div>`;
+      }
+    }
+  }
+
+  // --- Инициализация ---
   const params = new URLSearchParams(location.search);
-  const original = decodeParam(params.get('original'));
-  const changed  = decodeParam(params.get('changed'));
+  originalText = decodeParam(params.get('original'));
+  changedText  = decodeParam(params.get('changed'));
 
-  if (!original && !changed) {
-    diffEl.innerHTML = '<div class="error">Нет данных. Добавьте в URL параметры <code>original</code> и <code>changed</code> (gzip+base64).</div>';
-    return;
+  if (!originalText && !changedText) {
+    inputPanel.classList.add('visible');
+  } else {
+    computeDiff();
   }
 
-  // Строим unified diff через jsdiff
-  const patch = Diff.createTwoFilesPatch(
-    'original', 'changed', original, changed, '', '', { context: 3 }
-  );
-
-  // Рисуем side-by-side через diff2html
-  const ui = new Diff2HtmlUI(diffEl, patch, {
-    outputFormat: 'side-by-side',
-    drawFileList: false,
-    matching: 'lines',
-    highlight: false
+  document.getElementById('compareBtn').addEventListener('click', () => {
+    originalText = textA.value;
+    changedText = textB.value;
+    history.replaceState(null, '', '?original=' + encodeParam(originalText) + '&changed=' + encodeParam(changedText));
+    computeDiff();
+    render();
   });
-  ui.draw();
+
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    textA.value = ''; textB.value = ''; originalText = ''; changedText = ''; renderedRows = []; diffEl.innerHTML = '';
+  });
+
+  function applyResponsiveView() {
+    if (!userTouchedView) {
+      const v = desiredDefaultView();
+      document.querySelector(`input[name="view"][value="${v}"]`).checked = true;
+    }
+  }
+
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => {
+      applyResponsiveView();
+      render();
+    }, 150);
+  });
+
+  applyResponsiveView();
+  render();
 })();
 </script>
 </body>
